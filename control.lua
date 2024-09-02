@@ -20,6 +20,12 @@ local scan_next_chunk = function(force_index, surface_index, radar_unit)
         return
     end
 
+    -- Get entity center chunk
+    local center = {
+        x = math.floor(gfsr.entity.x / 32),
+        y = math.floor(gfsr.entity.y / 32)
+    }
+
     -- Increase XY coordinate until we have an unreveiled and uncharted chunk
     local chunk_charted, chunk_generated
     local chunk_is_available = true
@@ -27,12 +33,12 @@ local scan_next_chunk = function(force_index, surface_index, radar_unit)
 
         -- Get position
         local chunk = {
-            x = math.min(math.max(gfsr.x, min_chunk_position), max_chunk_position),
-            y = math.min(math.max(gfsr.y, min_chunk_position), max_chunk_position)
+            x = math.min(math.max(gfsr.x + center.x, min_chunk_position), max_chunk_position),
+            y = math.min(math.max(gfsr.y + center.y, min_chunk_position), max_chunk_position)
         }
         local pos = {
-            x = gfsr.x * 32,
-            y = gfsr.y * 32
+            x = (chunk.x * 32),
+            y = (chunk.y * 32)
         }
         local box = {pos, {
             x = pos.x + 31,
