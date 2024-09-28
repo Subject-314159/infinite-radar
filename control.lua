@@ -7,23 +7,21 @@ local scan_next_chunk = function(force_index, surface_index, radar_unit)
     local radius = gfsr.radius
     local max_radius = settings.global["inf_max-chunk-radius"].value
 
-    -- Get min/max chunk position of 2 million tiles / 32 in each direction
-    -- Max chunk minus 1 because the box for the 2 millionth tile would be outside map boundaries
-    local max_chunk_position = 62499
-    local min_chunk_position = -62500
+    -- Get min/max chunk position of 1 million tiles / 32 in each direction
+    -- Max chunk minus 1 because the box for the 1 millionth tile would be outside map boundaries
+    local max_chunk_position = 31249
+    local min_chunk_position = -31250
 
     -- Early exit if the scan radius for this radar is bigger than the setting, and settings is not set to -1
     if radius > max_radius and max_radius >= 0 then
-        if gfsr.entity and gfsr.entity.valid then
-            gfsr.entity.active = false
-        end
+        gfsr.entity.active = false
         return
     end
 
     -- Get entity center chunk
     local center = {
-        x = math.floor(gfsr.entity.x / 32),
-        y = math.floor(gfsr.entity.y / 32)
+        x = math.floor(gfsr.entity.position.x / 32),
+        y = math.floor(gfsr.entity.position.y / 32)
     }
 
     -- Increase XY coordinate until we have an unreveiled and uncharted chunk
@@ -100,7 +98,59 @@ local set_active_all = function(active)
     end
 end
 
+local set_global_radar = function(radar, force_index, surface_index)
+    -- Construct global array
+
+    -- Get global force
+    if not global.forces then
+        global.forces = {}
+    end
+    if not global.forces[force_index] then
+        global.forces[force_index] = {}
+    end
+    local gf = global.forces[force_index]
+
+    -- Get global surface
+    if not gf.surfaces then
+        gf.surfaces = {}
+    end
+    if not gf.surfaces[surface_index] then
+        gf.surfaces[surface_index] = {}
+    end
+    local gfs = gf.surfaces[surface_index]
+
+    -- Get global radar
+    if not gfs.radars then
+        gfs.radars = {}
+    end
+
+    -- Update radar entry
+    if not gfs.radars[radar.unit_number] then
+        gfs.radars[radar.unit_number] = {
+            entity = radar,
+            radius = 1,
+            direction = 1,
+            x = -1,
+            y = -1,
+            ticks_since_last_scan = 9999999999
+        }
+    end
+end
+
 local init = function()
+    -- Scan all surfaces
+    for _, s in pairs(game.surfaces) do
+        -- Get all infiniradars on that surface
+        local prop = {
+            name = "infiniradar"
+        }
+        local radars = s.find_entities_filtered(prop)
+
+        -- Store each radar in global
+        for _, r in pairs(radars) do
+            set_global_radar(r, r.force_index, s.index)
+        end
+    end
 end
 
 script.on_configuration_changed(function()
@@ -112,74 +162,62 @@ script.on_init(function()
 end)
 
 script.on_event(defines.events.on_tick, function(e)
+    -- Early exit if we do not have global forces yet
     if not global.forces then
         return
     end
     -- Loop through each radar in global
     for force_index, gf in pairs(global.forces) do
-        for surface_index, gfs in pairs(gf.surfaces) do
-            for unit_number, gfsr in pairs(gfs.radars) do
-                if gfsr.entity.valid then
-                    -- Check if radar on this surface is powered
-                    if gfsr.entity.status == defines.entity_status.working then
-                        -- Increase tick count
-                        gfsr.ticks_since_last_scan = gfsr.ticks_since_last_scan + 1
+        -- Check if the force exists
+        if game.forces[force_index] then
+            -- Force is valid
+            for surface_index, gfs in pairs(gf.surfaces) do
+                -- Check if surface exists
+                if game.get_surface(surface_index) then
+                    -- Surface is valid
+                    for unit_number, gfsr in pairs(gfs.radars) do
+                        -- Check if the radar entity is set and valid
+                        if gfsr.entity and gfsr.entity.valid then
+                            -- Check if radar is powered
+                            if gfsr.entity.status == defines.entity_status.working then
+                                -- Increase tick count
+                                gfsr.ticks_since_last_scan = gfsr.ticks_since_last_scan + 1
 
-                        -- Scan next chunk if bigger than thicc threshold
-                        if gfsr.ticks_since_last_scan > 5 * 60 then
-                            scan_next_chunk(force_index, surface_index, unit_number)
+                                -- Scan next chunk if bigger than thicc threshold
+                                if gfsr.ticks_since_last_scan > 5 * 60 then
+                                    scan_next_chunk(force_index, surface_index, unit_number)
+                                end
+                            end
+                        else
+                            -- Delete global radar
+                            gfs.radars[unit_number] = nil
                         end
                     end
                 else
-                    gfs.radars[unit_number] = nil
+                    -- Delete global surface 
+                    gf.surfaces[surface_index] = nil
                 end
             end
-
+        else
+            -- Delete global force
+            global.forces[force_index] = nil
         end
     end
 end)
 
-local on_radar_built = function(radar, force_index, surface_index)
-    -- Construct global array
-    if not global.forces then
-        global.forces = {}
-    end
-    if not global.forces[force_index] then
-        global.forces[force_index] = {}
-    end
-    local gf = global.forces[force_index]
-    if not gf.surfaces then
-        gf.surfaces = {}
-    end
-    if not gf.surfaces[surface_index] then
-        gf.surfaces[surface_index] = {}
-    end
-    local gfs = gf.surfaces[surface_index]
-    if not gfs.radars then
-        gfs.radars = {}
-    end
-
-    -- Update radar entry
-    gfs.radars[radar.unit_number] = {
-        entity = radar,
-        radius = 1,
-        direction = 1,
-        x = -1,
-        y = -1,
-        ticks_since_last_scan = 9999999999
-    }
-end
-
 script.on_event(defines.events.on_robot_built_entity, function(e)
     if (e.created_entity and e.created_entity.name == "infiniradar") then
-        on_radar_built(e.created_entity, e.robot.force.index, e.created_entity.surface.index)
+        set_global_radar(e.created_entity, e.robot.force.index, e.created_entity.surface.index)
     end
 end)
 
 script.on_event(defines.events.on_built_entity, function(e)
     if (e.created_entity and e.created_entity.name == "infiniradar") then
         local player = game.get_player(e.player_index)
-        on_radar_built(e.created_entity, player.force.index, e.created_entity.surface.index)
+        if not player then
+            return
+        end
+        set_global_radar(e.created_entity, player.force.index, e.created_entity.surface.index)
     end
 end)
 
